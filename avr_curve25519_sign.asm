@@ -7,15 +7,35 @@
 .org 0
 
 
-LDI R16, 0x80
-LDI R17, 0xff
-MOV R4, R16
-MOV R5, R17
-rcall mul_8_by_8
+// Load some static data to work with into RAM, for testing
+LDI R26, 0
+LDI R27, 1
+LDI R30, 0
+LDI R31, 8
+EOR R1, R1
+EOR R3, R3
+initialize_loop_top:
+  LPM R2, Z+
+  ST X+, R2
+  DEC R1
+  CP R1, R3
+  BRNE initialize_loop_top 
+
+
+LDI R26, 0
+LDI R27, 1
+rcall is_gte_25519
 
 
 
-LDI R19, 7
+.org 1024
+.db 0xed, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
+.db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
+.db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
+.db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0x7f
+
+
+
 
 .org 64
 
@@ -57,3 +77,121 @@ mul_8_by_8:
 		BRPL mul_8_by_8_top
 	RET
 	
+
+// adds a 32-byte integer in [X] to a 32-byte integer in [Y], storing the
+// result in [Z]. It is assumed to not overflow.
+// The upper byte of X, Y, and Z must not roll over when the register is increased by 32,
+// or the register will be clobbered.
+// Clobbers: R16, R2, R3
+add_32_to_32:
+	LDI R16, 31
+	CLC
+	add_32_to_32_top:
+		LD R2, X+
+		LD R3, Y+
+		ADC R2, R3
+		ST Z+, R2
+		DEC R16
+		BRPL add_32_to_32_top
+	SBIW R26, 32
+	SBIW R28, 32
+	SBIW R30, 32
+	RET
+	
+// subtracts a 32-byte integer in [Y] from a 32-byte integer in [X], storing the
+// result in [Z].
+// The upper byte of X, Y, and Z must not roll over when the register is increased by 32,
+// or the register will be clobbered.
+// Clobbers: R16, R2, R3
+sub_32_from_32:
+	LDI R16, 31
+	CLC
+	sub_32_from_32_top:
+		LD R2, X+
+		LD R3, Y+
+		SBC R2, R3
+		ST Z+, R2
+		DEC R16
+		BRPL sub_32_from_32_top
+	SBIW R26, 32
+	SBIW R28, 32
+	SBIW R30, 32
+
+	// TODO: Handle underflow
+
+	RET
+
+// Test if [X] >= 2^255 - 19
+// R2 is set to 0xff if it is greater or equal and 0x00 if it is lesser
+// Clobbbers R4, R16, R17, R18, R19
+is_gte_25519:
+	// 2**255-19 = 7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed
+	// X         = ????????????????????????????????????????????????????????????????
+	//
+	// We think of this in runs of bytes. Here are their values for 2**255-19
+	//   Major: 0x7f
+	//   Middle: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+	//   Minor: 0xed
+	//
+	// From this we can derive a few variables:
+	//   major_lt:  is X's Major  less than that of 2**255-19 ?
+	//   major_eq:  is X's Begin  equal to  that of 2**255-19 ?
+	//   middle_lt: is X's Middle less than that of 2**255-19 ?
+	//   minor_lt:  is X's Minor  less than that of 2**255-19 ?
+	//
+	// Then the answer to X < 2**255-19 is:
+	//
+	// In general, we can compare the (Major, Middle, Minor) tuple with
+	//   major_lt | (major_eq & (middle_lt | (major_eq & minor_lt)))
+	//
+	// That is, the whole is lesser if either the more significant element is lesser than its partner
+	// or it matches and the less signficant remainder is recursively lesser.
+	// Since !middle_lt implies middle_eq for 2**255-19's Middle, though, we can simplify to:
+	//
+	// major_lt | (major_eq & (middle_lt | minor_lt))
+	//
+
+	// X starts pointing at the LSB, so we start by computing minor_lt
+	LD R4, X+ // Load the Minor of X
+	LDI R16, 0xed // Load the Minor of 2*255-19
+	CP R4, R16 // Compare. The C bit (bit 0) will be set if X[0]<0xed. The Z bit (bit 1) will be set if X[0]=0xed
+	LDS R17, 0x5F // Save the status register. The low bit is minor_lt.
+	
+	// Next we must compute middle_lt. The technique is to compute middle_eq by ANDing all the
+	// bytes in X's Middle together, and then comparing with 0xff.
+	LDI R19, 0xff // ANDing accumulator -- this could use a non-immediate register with only one word extra
+	LDI R18, 29 // loop counter -- we must go around 30 times
+	is_gte_25519_anding_loop:
+		LD R4, X+
+		AND R19, R4
+		DEC R18
+		BRPL is_gte_25519_anding_loop
+	// R19 now holds all the bytes of X's middle ANDed together. (R19=0xff) <-> middle_eq
+	// Conveniently, R18 has wrapped around and now holds 0xff, which we want to compare against
+	CP R19, R18 // Compare X's ANDed Middle is 0xff
+	LDS R18, 0x5F // R19's C bit now holds middle_lt: TODO: Verify signedness of CP
+
+	// Finally, we must compute major_lt and major_eq
+	LDI R16, 0x7f
+	LD R4, X
+	CP R4, R16 // Compare. The C bit (bit 0) will be set if major_lt (i.e. X[31]<0x7f). The Z bit (bit 1) will be set if major_eq (i.e. X[0]=0x7f.)
+	LDS R16, 0x5F // R16 now holds major_lt and major_eq
+	MOV R19, R16
+	LSR R19	// R19's bit 0 holds major_eq
+
+	// To summarize:
+	// major_lt  is in R16's low bit
+	// major_eq  is in R19's low bit
+	// middle_lt is in R18's low bit
+	// minor_lt  is in R17's low bit
+
+	OR R18, R17 // R18's low bit now holds middle_lt | minor_lt
+	AND R18, R19 // R18's low bit now holds major_eq & (middle_lt | minor_lt)
+	OR R16, R18 // R16's low bit now holds major_lt | (major_eq & (middle_lt | minor_lt))
+	ANDI R16, 0x01 // R16 now 0x01 if X < 2**255-19, otherwise 0x00
+	NEG R16  // R16 is now 0xff if X < 2**255-19, otherwise 0x00
+	COM R16  // R16 is now 0xff if X >= 2**255-19, otherwise 0x00
+
+	MOV R2, R16
+	SBIW X, 31 // Move X back to where it was
+	RET
