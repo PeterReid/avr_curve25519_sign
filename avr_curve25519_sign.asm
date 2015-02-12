@@ -22,9 +22,13 @@ initialize_loop_top:
   BRNE initialize_loop_top 
 
 
-LDI R26, 0
+LDI R26, 32
 LDI R27, 1
-rcall is_gte_25519
+LDI R28, 64
+LDI R29, 1
+LDI R30, 96
+LDI R31, 1
+rcall sub_32_from_32
 
 
 
@@ -35,7 +39,20 @@ rcall is_gte_25519
 .db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0x7f
 
 
+/*.db 0xec, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
+.db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
+.db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
+.db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0x7f*/
 
+.db 0x01, 0x00, 0x00, 0x00,   0x00, 0x00, 0x00, 0x00
+.db 0x00, 0x00, 0x00, 0x00,   0x00, 0x00, 0x00, 0x00
+.db 0x00, 0x00, 0x00, 0x00,   0x00, 0x00, 0x00, 0x00
+.db 0x00, 0x00, 0x00, 0x00,   0x00, 0x00, 0x00, 0x00
+
+.db 0x01, 0x00, 0x00, 0x00,   0x00, 0x00, 0x00, 0x00
+.db 0x00, 0x00, 0x00, 0x00,   0x00, 0x00, 0x00, 0x00
+.db 0x00, 0x00, 0x00, 0x00,   0x00, 0x00, 0x00, 0x00
+.db 0x00, 0x00, 0x00, 0x00,   0x00, 0x00, 0x00, 0x00
 
 .org 64
 
@@ -104,8 +121,11 @@ add_32_to_32:
 // or the register will be clobbered.
 // Clobbers: R16, R2, R3
 sub_32_from_32:
-	LDI R16, 31
-	CLC
+	//
+	// First, do a normal 256-bit subtraction.
+	//
+	LDI R16, 31 // Go around 32 times
+	CLC // 
 	sub_32_from_32_top:
 		LD R2, X+
 		LD R3, Y+
@@ -113,11 +133,38 @@ sub_32_from_32:
 		ST Z+, R2
 		DEC R16
 		BRPL sub_32_from_32_top
+	
+	// If we ended up with an underflow (carry set), then we need to behave as if we wrapped around
+	// to 2**255-19-1 instead of 2**256-1. We can do that by subtracting off (2**256 - (2**255-19)).
+	// That difference is
+	// 0x8000000000000000000000000000000000000000000000000000000000000013
+	LDS R17, 0x5F // Load the status register. Bit 0 (Carry) is set if we underflowed.
+	ANDI R17, 1 // R17 is now 0x01 is we underflowed, and 0x00 otherwise
+	NEG R17 // R17 is now 0xff is we underflowed, and 0x00 otherwise
+
+	// The LSB is a special case, since it is 0x13
+	SBIW R30, 32
+	LD R2, Z
+	LDI R16, 0xED
+	AND R16, R17
+	ADD R2, R16
+	ST Z+, R2
+	
+	LDI R16, 29 // loop 30 times
+	sub_32_from_32_wraparound_top:
+		LD R2, Z
+		ADC R2, R17
+		ST Z+, R2 
+		DEC R16
+		BRPL sub_32_from_32_wraparound_top
+	LD R16, Z
+	ANDI R17, 0x7F
+	ADC R16, R17
+	ST Z, R16
+
 	SBIW R26, 32
 	SBIW R28, 32
-	SBIW R30, 32
-
-	// TODO: Handle underflow
+	SBIW R30, 31
 
 	RET
 
@@ -195,3 +242,4 @@ is_gte_25519:
 	MOV R2, R16
 	SBIW X, 31 // Move X back to where it was
 	RET
+
