@@ -119,8 +119,6 @@ mul_8_by_8:
 
 // adds a 32-byte integer in [X] to a 32-byte integer in [Y], storing the
 // result in [Z]. It is assumed to not overflow.
-// The upper byte of X, Y, and Z must not roll over when the register is increased by 32,
-// or the register will be clobbered.
 // Clobbers: R16, R2, R3
 add_32_to_32:
 	LDI R16, 31
