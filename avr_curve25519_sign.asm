@@ -265,7 +265,11 @@ is_gte_25519:
 	SBIW X, 31 // Move X back to where it was
 	RET
 
-
+	
+// Multiply a 32-byte integer in [Y] from a 32-byte integer in [X], storing the
+// product in 64 bytes at [Z].
+// 
+// Clobbers: R2, R3, R4, R5, R6, R7, R8, R9, R16, R17, R18, R19
 mul_32_by_32:
 	//
 	// Zero out Z -- we're going to be accumulating into it.
@@ -318,5 +322,9 @@ mul_32_by_32:
 
 		DEC R18
 		BRPL mul_32_by_32_x_top
+
+	// Put the pointers back where we found them
+	SBIW Z, 32
+	SBIW X, 32
 	RET
 
