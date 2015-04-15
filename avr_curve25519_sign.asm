@@ -28,7 +28,7 @@ LDI R28, 64
 LDI R29, 1
 LDI R30, 96
 LDI R31, 1
-rcall mul_32_by_32
+rcall mul_32_by_32_mod_p25519
 
 
 
@@ -42,23 +42,34 @@ rcall mul_32_by_32
 /*.db 0xec, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
 .db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
 .db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
-.db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0x7f*/
+.db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0x7f
 
 .db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
 .db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
 .db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
 .db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
-/*
+
 .db 0xff, 0x00, 0x00, 0x00,   0x00, 0x00, 0x00, 0x00
 .db 0x00, 0x00, 0x00, 0x00,   0x00, 0x00, 0x00, 0x00
 .db 0x00, 0x00, 0x00, 0x00,   0x00, 0x00, 0x00, 0x00
 .db 0x00, 0x00, 0x00, 0x00,   0x00, 0x00, 0x00, 0x00
-*/
+
 
 .db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
 .db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
 .db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
-.db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
+.db 0xff, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff*/
+
+.db 0x67, 0x85, 0x80, 0x39, 0x39, 0x15, 0x1a, 0x6a
+.db 0xc9, 0x64, 0x65, 0xcb, 0x9d, 0xd7, 0x6d, 0x83
+.db 0x5d, 0xe5, 0x90, 0x17, 0x11, 0x46, 0xb0, 0xe1
+.db 0xd1, 0xa6, 0xde, 0xc4, 0x5d, 0x28, 0x43, 0x16
+
+.db 0x5f, 0xc9, 0x96, 0x80, 0xd1, 0x99, 0x9d, 0x95
+.db 0x11, 0xbf, 0x39, 0x31, 0x8f, 0xcc, 0xda, 0xee
+.db 0x8f, 0xb2, 0xbf, 0x21, 0x94, 0xfa, 0xab, 0xce
+.db 0x23, 0x72, 0x83, 0xb9, 0xe1, 0x38, 0xdf, 0x50
+
 
 .db 0xd0, 0xd0, 0xd0, 0xd0,   0xd0, 0xd0, 0xd0, 0xd0
 .db 0xd0, 0xd0, 0xd0, 0xd0,   0xd0, 0xd0, 0xd0, 0xd0
@@ -326,3 +337,152 @@ mul_32_by_32:
 	SBIW X, 32
 	RET
 
+maybe_subtract_p25519:
+	RCALL is_gte_25519
+
+	LDI R16, 0xed
+	LD R4, X
+	AND R16, R2
+	SUB R4, R16
+	ST X+, R4
+
+	LDI R18, 29
+	maybe_subtract_p25519_loop_top:
+		LD R4, X
+		SBC R4, R2
+		ST X+, R4
+
+		DEC R18
+		BRPL maybe_subtract_p25519_loop_top
+		
+	LD R4, X
+	ASR R2 // Finally subtrahend, the high byte of p25519 is either 0x7f or 0x00. In either case, that is the mask shifted right
+	SBC R2, R2
+	ST X+, R4
+
+	SBIW X, 32
+	RET
+
+mul_32_by_32_mod_p25519:
+	RCALL mul_32_by_32
+
+	// In Z, we have a 64-byte product. We can call its halves z_low and z_high.
+	//
+	//   product % p25519 
+	// = (z_low + z_high*2^256) % p25519
+	// = ((z_low % p25519) + (z_high*2^256 % p25519)) % p25519
+	// = ((z_low % p25519) + (z_high*38    % p25519)) % p25519    since 2^256 = p25519+p25519+38
+	// = (z_low + z_high*38) % p25519
+	//
+	// This is what we will compute.
+
+	// Multiply z_high by 38 while accumulating the sum into z_low
+	MOVW X, Z
+	ADIW X, 32
+
+	EOR R7, R7 // initialize carry to 0
+	LDI R18, 31 // Loop 32 times
+	LDI R19, 38
+	mul_32_by_32_mod_p25519_mul38_top:
+		MOV R4, R19
+		LD R5, X+
+		RCALL mul_8_by_8
+		// z_high[i]*38 is now in R2:R3
+
+		// Add in the existing byte of z_low
+		LD R6, Z
+		ADD R2, R6
+		ADC R3, R0
+
+		// Add in the carry
+		ADD R2, R7
+		ADC R3, R0
+
+		ST Z+, R2
+		MOV R7, R3
+
+		DEC R18
+		BRPL mul_32_by_32_mod_p25519_mul38_top
+
+	// R2:R7 now contain the upper two bytes of z_low+38*z_high. The number
+	// of times we subtract off p25519 is controlled by the upper bit of R2
+	// and the lower bits of R7, since each bit being on there corresponds
+	// to 2**n copies of p25519 needing to be subtracted off.
+	//
+	// (For example, if the high bit of R2 is set, that represents 2**255,
+	// which accounts for one p25519 being subtracted off. The lowest it of
+	// R7 being set represents 2**256, which accounts for two p25519s being
+	// subtracted off.)
+	ADD R2, R2 // Double R2 in order to set the carry bit to its upper bit
+	ADC R7, R7 // Double R7 to left-shift it one
+	
+	// Total subtrahend will be accumulated into R2:R3
+	EOR R2, R2
+	EOR R3, R3
+	// The lower bytes of the potential subtrahend will in R16:R17
+	LDI R16, 0xed
+	LDI R17, 0xff
+
+	LDI R18, 5 // TODO: This may need to be just 4
+	mul_32_by_32_mod_p25519_reducer_top:
+		// Turn the lower bit of R7 into a mask
+		MOV R19, R7
+		ANDI R19, 1
+		NEG R19
+
+		ASR R7
+
+		// Duplicate the potential subtrahend lower bits
+		MOV R4, R16
+		MOV R5, R17
+
+		// Mask the potential subtrahend lower bits
+		AND R4, R19
+		AND R5, R19
+
+		// Accumulate into our total subtrahend
+		ADD R2, R4
+		ADC R3, R5
+		
+		// Double the subtrahend for the next iteration
+		ADD R16, R16
+		ADC R17, R17
+
+		DEC R18
+		BRPL mul_32_by_32_mod_p25519_reducer_top
+
+	SBIW Z, 32
+	LD R4, Z
+	SUB R4, R2
+	ST Z+, R4
+	LD R4, Z
+	SBC R4, R3
+	ST Z+, R4
+
+	LDI R19, 28
+	mul_32_by_32_mod_p25519_subtractor_top:
+		LD R4, Z
+		SBC R4, R18 // R18 is 0xff, since we used to as a loop counter
+		ST Z+, R4
+
+		DEC R19
+		BRPL mul_32_by_32_mod_p25519_subtractor_top
+
+	LD R18, Z
+	ANDI R18, 0x7f
+	ST Z+, R18
+
+	SBIW Z, 32
+	MOVW X, Z
+	RCALL maybe_subtract_p25519
+
+	// Now we have to reduce this 33-byte quantity modulo p25519.
+	// We can bound how large the quantity is. z_high is, at most, the upper half of (p25519-1)*(p25519-1)
+	// z_low could be up to 2**256-1.
+	// Their product could be, at most, 38 * ((p25519-1)*(p25519-1)/(2**256)) + (2**256-1)
+	// = 1215816936991820051947495342591223032459334838989225922414304632083087861218567
+	// This is less than p25519*21, so we can bound how many copies of p25519 we need to subtract off.
+
+	// For convenience, we will actually handle up to 31 copies of p25519.
+
+	RET
