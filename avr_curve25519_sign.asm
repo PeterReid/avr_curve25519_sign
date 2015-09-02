@@ -146,7 +146,7 @@ add_32_to_32:
 	SBIW R30, 32
 	RET
 	
-// subtracts a 32-byte integer in [Y] from a 32-byte integer in [X], storing the
+// subtracts a 32-byte integer in [Y] from a 32-byte integer in [X] (mod p25519), storing the
 // result in [Z].
 // The upper byte of X, Y, and Z must not roll over when the register is increased by 32,
 // or the register will be clobbered.
@@ -549,8 +549,24 @@ mainloop:
 		// e = a + c
 		LDI R26, 0
 		LDI R28, 64
-		LDI R20, 128
+		LDI R30, 128
 		RCALL add_32_to_32_mod_p25519
+
+		// a = a - c
+		LDI R28, 64
+		LDI R30, 0
+		RCALL sub_32_from_32
+
+		// c = b + d
+		LDI R26, 32
+		LDI R28, 96
+		LDI R20, 64
+		RCALL add_32_to_32_mod_p25519
+
+		// b = b - d
+		LDI R28, 96
+		LDI R30, 32
+		RCALL sub_32_from_32
 
 
 		DEC R20
