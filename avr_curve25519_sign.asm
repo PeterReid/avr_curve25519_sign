@@ -28,7 +28,7 @@ LDI R28, 96
 LDI R29, 1
 LDI R30, 128
 LDI R31, 1
-rcall add_32_to_32_mod_p25519
+rcall add_32_to_32
 
 
 
@@ -144,6 +144,9 @@ add_32_to_32:
 	SBIW R26, 32
 	SBIW R28, 32
 	SBIW R30, 32
+
+	RCALL maybe_subtract_p25519
+
 	RET
 	
 // subtracts a 32-byte integer in [Y] from a 32-byte integer in [X] (mod p25519), storing the
@@ -199,12 +202,12 @@ sub_32_from_32:
 
 	RET
 
-// Test if [X] >= 2^255 - 19
+// Test if [Z] >= 2^255 - 19
 // R2 is set to 0xff if it is greater or equal and 0x00 if it is lesser
 // Clobbbers R4, R16, R17, R18, R19
 is_gte_25519:
 	// 2**255-19 = 7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed
-	// X         = ????????????????????????????????????????????????????????????????
+	// Z         = ????????????????????????????????????????????????????????????????
 	//
 	// We think of this in runs of bytes. Here are their values for 2**255-19
 	//   Major: 0x7f
@@ -212,12 +215,12 @@ is_gte_25519:
 	//   Minor: 0xed
 	//
 	// From this we can derive a few variables:
-	//   major_lt:  is X's Major  less than that of 2**255-19 ?
-	//   major_eq:  is X's Begin  equal to  that of 2**255-19 ?
-	//   middle_lt: is X's Middle less than that of 2**255-19 ?
-	//   minor_lt:  is X's Minor  less than that of 2**255-19 ?
+	//   major_lt:  is Z's Major  less than that of 2**255-19 ?
+	//   major_eq:  is Z's Begin  equal to  that of 2**255-19 ?
+	//   middle_lt: is Z's Middle less than that of 2**255-19 ?
+	//   minor_lt:  is Z's Minor  less than that of 2**255-19 ?
 	//
-	// Then the answer to X < 2**255-19 is:
+	// Then the answer to Z < 2**255-19 is:
 	//
 	// In general, we can compare the (Major, Middle, Minor) tuple with
 	//   major_lt | (major_eq & (middle_lt | (major_eq & minor_lt)))
@@ -229,30 +232,30 @@ is_gte_25519:
 	// major_lt | (major_eq & (middle_lt | minor_lt))
 	//
 
-	// X starts pointing at the LSB, so we start by computing minor_lt
-	LD R4, X+ // Load the Minor of X
+	// Z starts pointing at the LSB, so we start by computing minor_lt
+	LD R4, Z+ // Load the Minor of Z
 	LDI R16, 0xed // Load the Minor of 2*255-19
-	CP R4, R16 // Compare. The C bit (bit 0) will be set if X[0]<0xed. The Z bit (bit 1) will be set if X[0]=0xed
+	CP R4, R16 // Compare. The C bit (bit 0) will be set if Z[0]<0xed. The Z bit (bit 1) will be set if Z[0]=0xed
 	LDS R17, 0x5F // Save the status register. The low bit is minor_lt.
 	
 	// Next we must compute middle_lt. The technique is to compute middle_eq by ANDing all the
-	// bytes in X's Middle together, and then comparing with 0xff.
+	// bytes in Z's Middle together, and then comparing with 0xff.
 	LDI R19, 0xff // ANDing accumulator -- this could use a non-immediate register with only one word extra
 	LDI R18, 29 // loop counter -- we must go around 30 times
 	is_gte_25519_anding_loop:
-		LD R4, X+
+		LD R4, Z+
 		AND R19, R4
 		DEC R18
 		BRPL is_gte_25519_anding_loop
-	// R19 now holds all the bytes of X's middle ANDed together. (R19=0xff) <-> middle_eq
+	// R19 now holds all the bytes of Z's middle ANDed together. (R19=0xff) <-> middle_eq
 	// Conveniently, R18 has wrapped around and now holds 0xff, which we want to compare against
-	CP R19, R18 // Compare X's ANDed Middle is 0xff
+	CP R19, R18 // Compare Z's ANDed Middle is 0xff
 	LDS R18, 0x5F // R19's C bit now holds middle_lt: TODO: Verify signedness of CP
 
 	// Finally, we must compute major_lt and major_eq
 	LDI R16, 0x7f
-	LD R4, X
-	CP R4, R16 // Compare. The C bit (bit 0) will be set if major_lt (i.e. X[31]<0x7f). The Z bit (bit 1) will be set if major_eq (i.e. X[0]=0x7f.)
+	LD R4, Z
+	CP R4, R16 // Compare. The C bit (bit 0) will be set if major_lt (i.e. Z[31]<0x7f). The Z bit (bit 1) will be set if major_eq (i.e. Z[0]=0x7f.)
 	LDS R16, 0x5F // R16 now holds major_lt and major_eq
 	MOV R19, R16
 	LSR R19	// R19's bit 0 holds major_eq
@@ -266,12 +269,12 @@ is_gte_25519:
 	OR R18, R17 // R18's low bit now holds middle_lt | minor_lt
 	AND R18, R19 // R18's low bit now holds major_eq & (middle_lt | minor_lt)
 	OR R16, R18 // R16's low bit now holds major_lt | (major_eq & (middle_lt | minor_lt))
-	ANDI R16, 0x01 // R16 now 0x01 if X < 2**255-19, otherwise 0x00
-	NEG R16  // R16 is now 0xff if X < 2**255-19, otherwise 0x00
-	COM R16  // R16 is now 0xff if X >= 2**255-19, otherwise 0x00
+	ANDI R16, 0x01 // R16 now 0x01 if Z < 2**255-19, otherwise 0x00
+	NEG R16  // R16 is now 0xff if Z < 2**255-19, otherwise 0x00
+	COM R16  // R16 is now 0xff if Z >= 2**255-19, otherwise 0x00
 
 	MOV R2, R16
-	SBIW X, 31 // Move X back to where it was
+	SBIW Z, 31 // Move Z back to where it was
 	RET
 
 	
@@ -337,33 +340,32 @@ mul_32_by_32:
 	SBIW X, 32
 	RET
 
-// TODO: Make this use Z. Both callers would prefer that.
-// Subtracts p25519 from X if X >= p25519
+// Subtracts p25519 from Z if Z >= p25519
 // Clobbbers R2, R4, R16, R17, R18, R19
 maybe_subtract_p25519:
 	RCALL is_gte_25519
 
 	LDI R16, 0xed
-	LD R4, X
+	LD R4, Z
 	AND R16, R2
 	SUB R4, R16
-	ST X+, R4
+	ST Z+, R4
 
 	LDI R18, 29
 	maybe_subtract_p25519_loop_top:
-		LD R4, X
+		LD R4, Z
 		SBC R4, R2
-		ST X+, R4
+		ST Z+, R4
 
 		DEC R18
 		BRPL maybe_subtract_p25519_loop_top
 		
-	LD R4, X
+	LD R4, Z
 	LSR R2 // Finally subtrahend, the high byte of p25519 is either 0x7f or 0x00. In either case, that is the mask shifted right
 	SBC R4, R2
-	ST X+, R4
+	ST Z+, R4
 
-	SBIW X, 32
+	SBIW Z, 32
 	RET
 	
 // Multiply a 32-byte integer in [Y] from a 32-byte integer in [X], storing the
@@ -480,7 +482,6 @@ mul_32_by_32_mod_p25519:
 	ST Z+, R18
 
 	SBIW Z, 32
-	MOVW X, Z
 	RCALL maybe_subtract_p25519
 
 	// Now we have to reduce this 33-byte quantity modulo p25519.
@@ -492,15 +493,6 @@ mul_32_by_32_mod_p25519:
 
 	// For convenience, we will actually handle up to 31 copies of p25519.
 
-	RET
-
-// Clobbers: R2, R3, R4, R6, R7, R16, R17, R18, R19
-add_32_to_32_mod_p25519:
-	RCALL add_32_to_32
-	MOVW R6, X
-	MOVW X, Z
-	RCALL maybe_subtract_p25519
-	MOVW X, R6
 	RET
 
 // Mask in R10: 0xff to swap, 0x00 to not swap.
@@ -550,7 +542,7 @@ mainloop:
 		LDI R26, 0
 		LDI R28, 64
 		LDI R30, 128
-		RCALL add_32_to_32_mod_p25519
+		RCALL add_32_to_32
 
 		// a = a - c
 		LDI R28, 64
@@ -561,7 +553,7 @@ mainloop:
 		LDI R26, 32
 		LDI R28, 96
 		LDI R20, 64
-		RCALL add_32_to_32_mod_p25519
+		RCALL add_32_to_32
 
 		// b = b - d
 		LDI R28, 96
