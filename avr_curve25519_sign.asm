@@ -337,6 +337,9 @@ mul_32_by_32:
 	SBIW X, 32
 	RET
 
+// TODO: Make this use Z. Both callers would prefer that.
+// Subtracts p25519 from X if X >= p25519
+// Clobbbers R2, R4, R16, R17, R18, R19
 maybe_subtract_p25519:
 	RCALL is_gte_25519
 
@@ -362,7 +365,11 @@ maybe_subtract_p25519:
 
 	SBIW X, 32
 	RET
-
+	
+// Multiply a 32-byte integer in [Y] from a 32-byte integer in [X], storing the
+// product in 64 bytes at [Z].
+// 
+// Clobbers: R2, R3, R4, R5, R6, R7, R8, R9, R16, R17, R18, R19
 mul_32_by_32_mod_p25519:
 	RCALL mul_32_by_32
 
@@ -486,3 +493,64 @@ mul_32_by_32_mod_p25519:
 	// For convenience, we will actually handle up to 31 copies of p25519.
 
 	RET
+
+// Clobbers: R2, R3, R4, R6, R7, R16, R17, R18, R19
+add_32_to_32_mod_p25519:
+	RCALL add_32_to_32
+	MOVW R6, X
+	MOVW X, Z
+	RCALL maybe_subtract_p25519
+	MOVW X, R6
+
+// Mask in R10: 0xff to swap, 0x00 to not swap.
+// Clobbers R2, R3, R4, R18
+maybe_swap:
+	LDI R18, 31
+
+	maybe_swap_loop_top:
+		LD R2, X
+		LD R3, Y
+		MOV R4, R2
+		EOR R4, R3
+		AND R4, R10
+		EOR R2, R4
+		EOR R3, R4
+		ST X+, R2
+		ST Y+, R3
+
+		DEC R18
+		BRPL maybe_swap_loop_top
+	SBIW X, 32
+	SBIW Y, 32
+	RET
+
+mainloop:
+
+	// TODO: Some setup
+	LDI R27, 1
+	LDI R29, 1
+	LDI R31, 1
+
+	LDI R20, 254
+	mainloop_top:
+		// TODO: Compute mask into R20
+		
+		// maybeswap(a, b)
+		LDI R26, 0
+		LDI R28, 32
+		RCALL maybe_swap
+
+		// maybeswap(c, d)
+		LDI R26, 64
+		LDI R28, 96
+		RCALL maybe_swap
+
+		// e = a + c
+		LDI R26, 0
+		LDI R28, 64
+		LDI R20, 128
+		RCALL add_32_to_32_mod_p25519
+
+
+		DEC R20
+		BRPL mainloop_top
