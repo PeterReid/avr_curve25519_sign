@@ -28,9 +28,16 @@ LDI R28, 64
 LDI R29, 1
 LDI R30, 128
 LDI R31, 1
-rcall mul_32_by_32_mod_p25519_in_scratchspace
+rcall invert
 
 
+//LDI R26, 32
+//LDI R27, 1
+//LDI R28, 64
+//LDI R29, 1
+//LDI R30, 128
+//LDI R31, 1
+//rcall mul_32_by_32_mod_p25519
 
 .org 1024
 .db 0xed, 0xff, 0xff, 0xff,   0xff, 0xff, 0xff, 0xff
@@ -70,11 +77,11 @@ rcall mul_32_by_32_mod_p25519_in_scratchspace
 .db 0x8f, 0xb2, 0xbf, 0x21, 0x94, 0xfa, 0xab, 0xce
 .db 0x23, 0x72, 0x83, 0xb9, 0xe1, 0x38, 0xdf, 0x50
 
-// p25519 - 3
-.db 0xea, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
-.db 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
-.db 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
-.db 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f
+// 0x100df9a13c6674bafbd1e5e04aba74888a07db96a9e5153287471a6d16985ca4L
+.db 0xa4, 0x5c, 0x98, 0x16, 0x6d, 0x1a, 0x47, 0x87
+.db 0x32, 0x15, 0xe5, 0xa9, 0x96, 0xdb, 0x07, 0x8a
+.db 0x88, 0x74, 0xba, 0x4a, 0xe0, 0xe5, 0xd1, 0xfb
+.db 0xba, 0x74, 0x66, 0x3c, 0xa1, 0xf9, 0x0d, 0x10
 
 .db 0xd0, 0xd0, 0xd0, 0xd0,   0xd0, 0xd0, 0xd0, 0xd0
 .db 0xd0, 0xd0, 0xd0, 0xd0,   0xd0, 0xd0, 0xd0, 0xd0
@@ -432,12 +439,15 @@ mul_32_by_32_mod_p25519:
 	LDI R16, 0xed
 	LDI R17, 0xff
 
+	EOR R6, R6 // Initialize a mask for the many 0xffs in the subtrahend. On the first need to subtract it will change to 0xff
+
 	LDI R18, 5 // TODO: This may need to be just 4
 	mul_32_by_32_mod_p25519_reducer_top:
 		// Turn the lower bit of R7 into a mask
 		MOV R19, R7
 		ANDI R19, 1
 		NEG R19
+		OR R6, R19
 
 		ASR R7
 
@@ -471,7 +481,7 @@ mul_32_by_32_mod_p25519:
 	LDI R19, 28
 	mul_32_by_32_mod_p25519_subtractor_top:
 		LD R4, Z
-		SBC R4, R18 // R18 is 0xff, since we used to as a loop counter
+		SBC R4, R6 // R18 is 0xff, since we used to as a loop counter
 		ST Z+, R4
 
 		DEC R19
@@ -518,6 +528,42 @@ mul_32_by_32_mod_p25519_in_scratchspace:
 
 	RET
 
+// [Y] <- [X]^-1   such that  ([X]*[Y]) % p25519 = 1
+invert:
+	LDI R16, 31
+	invert_copy_top:
+		LD R3, X+
+		ST Y+, R3
+		DEC R16
+		BRPL invert_copy_top
+
+	SBIW X, 32
+	SBIW Y, 32
+
+	MOVW R22, X
+	MOVW Z, Y
+	LDI R24, 254
+	invert_loop_top:
+		MOVW X, Y
+		MOVW Z, Y
+		RCALL mul_32_by_32_mod_p25519_in_scratchspace // [Y] <- [Y] * [Y]
+
+		LDI R17, 3
+		CP R17, R24
+		BREQ invert_loop_bottom
+
+		LDI R17, 5
+		CP R17, R24
+		BREQ invert_loop_bottom
+
+		MOVW X, R22
+		MOVW Z, Y
+		RCALL mul_32_by_32_mod_p25519_in_scratchspace // [Y] <- [Y] * [X]
+
+		invert_loop_bottom:
+		DEC R24
+		BRNE invert_loop_top
+	RET
 
 // Mask in R10: 0xff to swap, 0x00 to not swap.
 // Clobbers R2, R3, R4, R18
