@@ -481,7 +481,7 @@ mul_32_by_32_mod_p25519:
 	LDI R19, 28
 	mul_32_by_32_mod_p25519_subtractor_top:
 		LD R4, Z
-		SBC R4, R6 // R18 is 0xff, since we used to as a loop counter
+		SBC R4, R6
 		ST Z+, R4
 
 		DEC R19
