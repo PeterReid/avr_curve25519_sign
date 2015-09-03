@@ -24,11 +24,11 @@ initialize_loop_top:
 
 LDI R26, 32
 LDI R27, 1
-LDI R28, 96
+LDI R28, 64
 LDI R29, 1
 LDI R30, 128
 LDI R31, 1
-rcall add_32_to_32
+rcall mul_32_by_32_mod_p25519_in_scratchspace
 
 
 
@@ -368,10 +368,10 @@ maybe_subtract_p25519:
 	SBIW Z, 32
 	RET
 	
-// Multiply a 32-byte integer in [Y] from a 32-byte integer in [X], storing the
+// Multiply a 32-byte integer in [Y] by a 32-byte integer in [X], storing the
 // product in 64 bytes at [Z].
 // 
-// Clobbers: R2, R3, R4, R5, R6, R7, R8, R9, R16, R17, R18, R19
+// Clobbers: R2, R3, R4, R5, R6, R7, R8, R9, R16, R17, R18, R19, X
 mul_32_by_32_mod_p25519:
 	RCALL mul_32_by_32
 
@@ -495,6 +495,30 @@ mul_32_by_32_mod_p25519:
 
 	RET
 
+// Multiply a 32-byte integer in [Y] by a 32-byte integer in [X], storing the
+// product in 32 bytes at [Z]. Scratch space at 0x1c0..0x1ff is clobbered.
+// 
+// Clobbers: R2, R3, R4, R5, R6, R7, R8, R9, R16, R17, R18, R19, R20, R21, X, Z
+mul_32_by_32_mod_p25519_in_scratchspace:
+	// store Z for the duration of this function. Set Z to point at the scratch space
+	MOVW R20, Z 
+	LDI R30, 0xc0
+	LDI R31, 1
+	
+	RCALL mul_32_by_32_mod_p25519
+	
+	MOVW X, R20
+
+	LDI R16, 31 // loop counter
+	mul_32_by_32_mod_p25519_in_scratchspace_top:
+		LD R3, Z+
+		ST X+, R3
+		DEC R16
+		BRPL mul_32_by_32_mod_p25519_in_scratchspace_top
+
+	RET
+
+
 // Mask in R10: 0xff to swap, 0x00 to not swap.
 // Clobbers R2, R3, R4, R18
 maybe_swap:
@@ -526,8 +550,19 @@ mainloop:
 
 	LDI R20, 254
 	mainloop_top:
-		// TODO: Compute mask into R20
+		// TODO: Compute mask into R22
 		
+		// We have six prime field elements: a b c d e f
+		// They are located at:
+		// a: 0x100
+		// b: 0x120
+		// c: 0x140
+		// d: 0x160
+		// e: 0x180
+		// f: 0x1a0
+
+		// We have our multiplication work space (40 bytes) at 0x1c0 and going until 0x200
+
 		// maybeswap(a, b)
 		LDI R26, 0
 		LDI R28, 32
